@@ -1,53 +1,265 @@
 plugins {
-	id 'org.springframework.boot' version '2.4.2'
-	id 'io.spring.dependency-management' version '1.0.11.RELEASE'
-	id 'java'
+    id 'groovy-gradle-plugin'
+    id 'groovy'
+    id 'maven-publish'
+    id("io.github.gradle-nexus.publish-plugin") version "1.1.0"
+    id 'signing'
 }
 
-group = 'com.example.facturas'
-version = '0.0.1-SNAPSHOT'
-sourceCompatibility = '14'
-
-configurations {
-	compileOnly {
-		extendsFrom annotationProcessor
-	}
-}
+version project.projectVersion
+group "io.micronaut.build.internal"
 
 repositories {
-	mavenCentral()
-	maven { url 'https://repo.spring.io/milestone' }
+    mavenCentral()
+    gradlePluginPortal()
 }
 
-ext {
-	set('springCloudVersion', "2020.0.0")
+sourceSets {
+    functionalTest {
+    }
+}
+
+gradlePlugin.testSourceSets(sourceSets.functionalTest)
+configurations {
+    functionalTestImplementation {
+        extendsFrom(testImplementation)
+    }
+    functionalTestRuntimeClasspath {
+        resolutionStrategy {
+            exclude group: 'org.codehaus.groovy'
+        }
+    }
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+tasks.register('functionalTest', Test) {
+    inputs.dir(file("src/functionalTest/gradle-projects"))
+    testClassesDirs = sourceSets.functionalTest.output.classesDirs
+    classpath = sourceSets.functionalTest.runtimeClasspath
+}
+
+tasks.named('check') {
+    dependsOn(tasks.functionalTest)
 }
 
 dependencies {
-	//implementation 'org.springframework.boot:spring-boot-starter-actuator'
-	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-	implementation 'org.springframework.boot:spring-boot-starter-web'
-	implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'
-	implementation 'com.google.code.gson:gson'
-	//implementation 'org.springframework.cloud:spring-cloud-starter-config'
-	implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
-	//implementation 'org.springframework.cloud:spring-cloud-starter-sleuth'
-	implementation 'io.springfox:springfox-swagger2:2.9.2'
-	implementation 'io.springfox:springfox-swagger-ui:2.9.2'
-	compileOnly 'org.projectlombok:lombok'
-	runtimeOnly 'mysql:mysql-connector-java'
-	annotationProcessor 'org.projectlombok:lombok'
-	testImplementation('org.springframework.boot:spring-boot-starter-test') {
-		exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'
-	}
+    implementation "commons-lang:commons-lang:2.6",
+        'org.grails:grails-gdoc-engine:1.0.1',
+        'org.yaml:snakeyaml:1.33'
+    implementation "io.github.groovylang.groovydoc:io.github.groovylang.groovydoc.gradle.plugin:1.0.1"
+    // TODO: upgrade to new asciidoctor
+    implementation 'org.asciidoctor:asciidoctorj:2.5.6'
+    implementation "io.spring.nohttp:nohttp-gradle:0.0.10"
+    implementation "com.diffplug.spotless:spotless-plugin-gradle:6.11.0"
+    implementation "com.adarshr:gradle-test-logger-plugin:3.2.0"
+    implementation "io.github.gradle-nexus:publish-plugin:1.1.0"
+    implementation "se.patrikerdes:gradle-use-latest-versions-plugin:0.2.18"
+    implementation "org.sonarsource.scanner.gradle:sonarqube-gradle-plugin:3.4.0.2513"
+    implementation('com.lowagie:itext:2.0.8') {
+        exclude(group: 'bouncycastle')
+                .because("we don't use this, and it clashes with the one in mockserver")
+    }
+    implementation 'org.jsoup:jsoup:1.15.3'
+    implementation('org.xhtmlrenderer:core-renderer:8.0') {
+        exclude group: 'bouncycastle', module:'bcprov-jdk14'
+    }
+
+    implementation 'com.gradle:gradle-enterprise-gradle-plugin:3.11.2'
+    implementation 'org.nosphere.gradle.github:gradle-github-actions-plugin:1.3.2'
+    implementation 'com.gradle:common-custom-user-data-gradle-plugin:1.8.1'
+    implementation 'org.gradle:test-retry-gradle-plugin:1.4.1'
+    implementation 'me.champeau.gradle:japicmp-gradle-plugin:0.4.1'
+
+    implementation 'org.tomlj:tomlj:1.0.0'
+
+    testImplementation platform("org.spockframework:spock-bom:2.1-groovy-3.0")
+    testImplementation("org.spockframework:spock-core")
+
+    functionalTestImplementation("org.mock-server:mockserver-netty:5.14.0")
+    functionalTestImplementation("org.mock-server:mockserver-client-java:5.14.0")
+
 }
 
-dependencyManagement {
-	imports {
-		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
-	}
+configurations.all {
+    resolutionStrategy {
+        componentSelection {
+            withModule("xerces:xercesImpl") { ComponentSelection selection ->
+                selection.reject("No xerces")
+            }
+        }
+
+        eachDependency { details ->
+            if (details.requested.group == 'org.codehaus.groovy') {
+                details.useVersion groovyVersion
+                details.because 'Groovy 2.5.x not supported by Gradle 7.0+'
+            }
+        }
+    }
 }
 
-test {
-	useJUnitPlatform()
+tasks.register('docFilesJar', Jar) {
+    description = 'Package up files used for generating documentation.'
+    archiveVersion = null
+    archiveFileName = "grails-doc-files.jar"
+    from "src/main/template"
+}
+
+tasks.named('jar', Jar) {
+    from docFilesJar
+}
+
+
+gradlePlugin {
+    // Define the plugins
+    plugins {
+        base {
+            id = 'io.micronaut.build.internal.base'
+            implementationClass = 'io.micronaut.build.MicronautBasePlugin'
+        }
+        common {
+            id = 'io.micronaut.build.internal.common'
+            implementationClass = 'io.micronaut.build.MicronautBuildCommonPlugin'
+        }
+        'base-module' {
+            id = 'io.micronaut.build.internal.base-module'
+            implementationClass = 'io.micronaut.build.MicronautBaseModulePlugin'
+        }
+        module {
+            id = 'io.micronaut.build.internal.module'
+            implementationClass = 'io.micronaut.build.MicronautModulePlugin'
+        }
+        bom {
+            id = 'io.micronaut.build.internal.bom'
+            implementationClass = 'io.micronaut.build.MicronautBomPlugin'
+        }
+        publishing {
+            id = 'io.micronaut.build.internal.publishing'
+            implementationClass = 'io.micronaut.build.MicronautPublishingPlugin'
+        }
+        dependencyUpdates {
+            id = 'io.micronaut.build.internal.dependency-updates'
+            implementationClass = 'io.micronaut.build.MicronautDependencyUpdatesPlugin'
+        }
+        versionCatalogUpdates {
+            id = 'io.micronaut.build.internal.version-catalog-updates'
+            implementationClass = 'io.micronaut.build.catalogs.MicronautVersionCatalogUpdatePlugin'
+        }
+        docs {
+            id = 'io.micronaut.build.internal.docs'
+            implementationClass = 'io.micronaut.build.MicronautDocsPlugin'
+        }
+        gradleEnterprise {
+            id = 'io.micronaut.build.internal.gradle-enterprise'
+            implementationClass = 'io.micronaut.build.MicronautGradleEnterprisePlugin'
+        }
+        sharedSettings {
+            id = 'io.micronaut.build.shared.settings'
+            implementationClass = 'io.micronaut.build.MicronautSharedSettingsPlugin'
+        }
+        aotModule {
+            id = 'io.micronaut.build.internal.aot-module'
+            implementationClass = 'io.micronaut.build.aot.MicronautAotModulePlugin'
+        }
+        qualityReporting {
+            id = 'io.micronaut.build.internal.quality-reporting'
+            implementationClass = 'io.micronaut.build.MicronautQualityReportingAggregatorPlugin'
+        }
+        qualityChecks {
+            id = 'io.micronaut.build.internal.quality-checks'
+            implementationClass = 'io.micronaut.build.MicronautQualityChecksParticipantPlugin'
+        }
+        binaryCompatibilityCheck {
+            id = 'io.micronaut.build.internal.binary-compatibility-check'
+            implementationClass = 'io.micronaut.build.compat.MicronautBinaryCompatibilityPlugin'
+        }
+    }
+}
+
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
+
+def ossUser = System.getenv("SONATYPE_USERNAME") ?: project.hasProperty("sonatypeOssUsername") ? project.sonatypeOssUsername : ''
+def ossPass = System.getenv("SONATYPE_PASSWORD") ?: project.hasProperty("sonatypeOssPassword") ? project.sonatypeOssPassword : ''
+ext."signing.keyId" = System.getenv("GPG_KEY_ID") ?: project.hasProperty("signing.keyId") ? project.getProperty('signing.keyId') : null
+ext."signing.password" = System.getenv("GPG_PASSWORD") ?: project.hasProperty("signing.password") ? project.getProperty('signing.password') : null
+if (file("${rootDir}/secring.gpg").exists()) {
+    ext."signing.secretKeyRingFile" = file("${rootDir}/secring.gpg").absolutePath
+} else if (file("${System.getenv('HOME')}/.gnupg/secring.gpg").exists()){
+    ext."signing.secretKeyRingFile" = file("${System.getenv('HOME')}/.gnupg/secring.gpg").absolutePath
+}
+
+nexusPublishing {
+    repositories {
+        sonatype {
+            username = ossUser
+            password = ossPass
+            nexusUrl = uri("https://s01.oss.sonatype.org/service/local/")
+            snapshotRepositoryUrl = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
+            stagingProfileId = "11bd7bc41716aa" //can reduce execution time by even 10 seconds
+        }
+    }
+}
+
+Closure pomInfo = {
+    name = 'Micronaut internal build plugins'
+    description = "Micronaut internal build plugins. Not intended to be used in user's projects"
+    url = 'https://github.com/micronaut-projects/micronaut-build'
+    inceptionYear = '2020'
+    licenses {
+        license {
+            name = 'The Apache License, Version 2.0'
+            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+        }
+    }
+    developers {
+        developer {
+            id = 'alvarosanchez'
+            name = 'Álvaro Sánchez-Mariscal Arnaiz'
+        }
+    }
+    scm {
+        connection = 'scm:https://github.com/micronaut-projects/micronaut-build.git'
+        developerConnection = 'scm:git@github.com:micronaut-projects/micronaut-build.git'
+        url = 'https://github.com/micronaut-projects/micronaut-build'
+    }
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = project.group
+            artifactId = 'micronaut-gradle-plugins'
+            version = project.version
+
+            from components.java
+            pom pomInfo
+        }
+    }
+}
+
+afterEvaluate {
+    signing {
+        required { !project.version.endsWith("-SNAPSHOT") && !project.hasProperty("skipSigning") }
+        publishing.publications.each {
+            sign it
+        }
+    }
+
+    publishing.publications.withType(MavenPublication) { MavenPublication pub ->
+        pub.pom pomInfo
+    }
+
+    tasks.withType(Sign) {
+        onlyIf { !project.version.endsWith("-SNAPSHOT") }
+    }
+}
+
+//do not generate extra load on Nexus with new staging repository if signing fails
+tasks.withType(io.github.gradlenexus.publishplugin.InitializeNexusStagingRepository).configureEach {
+    shouldRunAfter(tasks.withType(Sign))
 }
