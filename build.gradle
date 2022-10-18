@@ -6,7 +6,7 @@ plugins {
     id 'signing'
 }
 
-version project.projectVersion
+version 'project.projectVersion'
 group "io.micronaut.build.internal"
 
 repositories {
